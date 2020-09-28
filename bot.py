@@ -7,12 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN') #This grabs the discord token from a .env file within the same directory as the bot
 
-client = discord.Client()
+#client = discord.Client()
 bot = commands.Bot(command_prefix='!')
 
-@client.event
-async def on_ready():
-    print(f'{client.user} has connected to Discord!')
+#@client.event
+#async def on_ready():
+#    print(f'{client.user} has connected to Discord!')
 
 
 
@@ -28,5 +28,5 @@ async def ness_test(test):
 
 
 
-client.run(TOKEN)
+#client.run(TOKEN)
 bot.run(TOKEN)

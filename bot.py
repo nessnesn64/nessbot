@@ -38,7 +38,7 @@ async def image(ctx):
     await ctx.send(file=discord.File('test.png'))
 
 @bot.command()
-async def magik(ctx):
+async def magik(ctx, arg1=None):
     workid = str(uuid.uuid4())
     hdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -50,9 +50,17 @@ async def magik(ctx):
     found = 0
     download = 0
     attempt = 0
+
+
     video = 0
+    audio = 0
+
+    if arg1 == "vid":
+        audio = 1
+
     image = 0
     size = 0
+
     filetype = None
     randheight = random.randrange(50,150)
     randwidth = random.randrange(50,150)
@@ -153,54 +161,81 @@ async def magik(ctx):
 
         os.mkdir(f"./{workid}-folder")
 
+        #Get framerate
         frame = await asyncio.create_subprocess_shell(f'ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 {workid}', stdout=asyncio.subprocess.PIPE)
         framerate = await frame.communicate()
         print(framerate)
         framerate = framerate[0].decode('ascii')
         framerate = framerate.strip()
         print(framerate)
+
+        #split input into series of pngs
         splitproc = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -i {workid} -fps_mode passthrough ./{workid}-folder/frame%04d.png', stdout=asyncio.subprocess.PIPE)
         split = await splitproc.communicate()
 
+        #Gather the dimensions of a single frame for max wackiness on the resizing
         with Image.open(f"./{workid}-folder/frame0001.png") as image:
             width, height = image.size
 
+        #Calc some decent values to use randomly
         maxheightwiggle = round(height/2)
         maxwidthwiggle = round(width/2)
 
         minheightwiggle = round(height/3)
         minwidthwiggle = round(width/3)
 
+        #Run mogrify in parallel for speed, wiggling variably with the math from earlier
         liquid = await asyncio.create_subprocess_shell(f'cd ./{workid}-folder; ls *.png | parallel mogrify -liquid-rescale {width - random.randrange(minwidthwiggle,maxwidthwiggle)}x{height - random.randrange(minheightwiggle,maxheightwiggle)} {{}}', stdout=asyncio.subprocess.PIPE)
         stdout, stderr = await liquid.communicate()
-        gifproc = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -framerate {framerate} -i ./{workid}-folder/frame%04d.png {workid}.gif -y', stdout=asyncio.subprocess.PIPE)
-        gif = await gifproc.communicate()
 
-        size = os.path.getsize(f'{workid}.gif')
+        if audio == 0:
+            print("making a gif")
+            #Generate a gif based on the mass png modifications
+            gifproc = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -framerate {framerate} -i ./{workid}-folder/frame%04d.png {workid}.gif -y', stdout=asyncio.subprocess.PIPE)
+            gif = await gifproc.communicate()
 
-        if size >= 20000000:
-            gifresizeproc = await asyncio.create_subprocess_shell(f'ffmpeg -y -i "{workid}.gif" -filter_complex "fps=20,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=32[p];[s1][p]paletteuse=dither=bayer" -loop 0 {workid}-mini.gif', stdout=asyncio.subprocess.PIPE)
-            gifresize = await gifresizeproc.communicate()
-            os.remove(f'{workid}.gif')
-            os.replace(f'{workid}-mini.gif',f'{workid}.gif')
-        #print(cmd)
-        #print(framerate)
-        # while not os.path.isfile("./out.gif"):
-        #     print("waiting for file to be ready")
-        #     sleep(1)
+            #Check if we're over the max size for an upload on discord
+            size = os.path.getsize(f'{workid}.gif')
 
-        await ctx.send(file=discord.File(f'{workid}.gif'))
+            #Make a mini-gif in 480p as an attempt to salvage a massive file
+            if size >= 20000000:
+                gifresizeproc = await asyncio.create_subprocess_shell(f'ffmpeg -y -i "{workid}.gif" -filter_complex "fps=20,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=32[p];[s1][p]paletteuse=dither=bayer" -loop 0 {workid}-mini.gif', stdout=asyncio.subprocess.PIPE)
+                gifresize = await gifresizeproc.communicate()
+                os.remove(f'{workid}.gif')
+                os.replace(f'{workid}-mini.gif',f'{workid}.gif')
 
-        shutil.rmtree(f"./{workid}-folder")
-        os.remove(f"{workid}.gif")
-        os.remove(f"{workid}")
-    # test = await asyncio.create_subprocess_shell(
-    #     'ls',
-    #     stdout=asyncio.subprocess.PIPE)
-    # magik = await asyncio.create_subprocess_shell(cmd,stdout=asyncio.subprocess.PIPE)
-    # stdout = await magik.communicate()
-    # print(cmd)
-    # await ctx.send(file=discord.File('mod.png'))
+            #Send it!
+            await ctx.send(file=discord.File(f'{workid}.gif'))
+
+            #Clean up all the scratch used in generation
+            shutil.rmtree(f"./{workid}-folder")
+            os.remove(f"{workid}.gif")
+            os.remove(f"{workid}")
+
+        if audio == 1:
+            print("making a video")
+            audioproc = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -i ./{workid} -map 0:a -c copy {workid}-audio.mov -y', stdout=asyncio.subprocess.PIPE)
+            audio = await audioproc.communicate()
+
+            vidproc = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -framerate {framerate} -i ./{workid}-folder/frame%04d.png -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libsvtav1 {workid}-video.mp4 -y', stdout=asyncio.subprocess.PIPE)
+            vid = await vidproc.communicate()
+
+            shuffleproc = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -i {workid}-video.mp4 -i {workid}-audio.mov -c copy -map 0:v:0 -map 1:a:0 {workid}.mp4 -y', stdout=asyncio.subprocess.PIPE)
+            suffle = await shuffleproc.communicate()
+
+            #Send it!
+            await ctx.send(file=discord.File(f'{workid}.mp4'))
+
+            #Clean up all the scratch used in generation
+            shutil.rmtree(f"./{workid}-folder")
+            os.remove(f"{workid}.mp4")
+            os.remove(f"{workid}-video.mp4")
+            os.remove(f"{workid}-audio.mov")
+            os.remove(f"{workid}")
+
+
+
+
 
 bot.run('')
 

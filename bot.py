@@ -23,6 +23,9 @@ bot = commands.Bot(command_prefix='$', intents=intents)
 intents = discord.Intents.default()
 intents.message_content = True
 
+scratchmessage = []
+
+
 client = discord.Client(intents=intents)
 
 #Function to determine if a webp is a video or image. Fuck you Google.
@@ -106,7 +109,7 @@ async def getmedia(ctx, workid):
         print(filetype)
         match filetype:
             case "image/gif":
-                workingtype = 1
+                workingtype = 3
             case "video/mp4":
                 workingtype = 1
             case "video/quicktime":
@@ -181,7 +184,7 @@ async def getmedia(ctx, workid):
             elif "gif" in str(req.headers.get('Content-Type')):
                 print("found gif")
                 filetype = str(req.headers.get('Content-Type'))
-                workingtype = 1
+                workingtype = 3
                 found = 1
             elif "webp" in str(req.headers.get('Content-Type')):
                 print("found webp")
@@ -193,7 +196,7 @@ async def getmedia(ctx, workid):
                 workingtype = 2
                 found = 1
             elif "png" in str(req.headers.get('Content-Type')):
-                print("found jpeg")
+                print("found png")
                 filetype = str(req.headers.get('Content-Type'))
                 workingtype = 2
                 found = 1
@@ -291,6 +294,11 @@ async def explode(cts, arg1=None):
 
 @bot.command(aliases=['deep'])
 async def deepfry(ctx, arg1=None):
+    workid = str(uuid.uuid4())
+    output = await getmedia(ctx, workid)
+    workingtype = output[0]
+    filetype = output[1]
+
     contrast = 5
     audio = 0
 
@@ -299,36 +307,38 @@ async def deepfry(ctx, arg1=None):
             print("custom contrast")
             contrast = int(arg1)
         elif arg1 == "help":
-            await ctx.send("deepfry arg list\nany number: change contrast in deepfry output (default 5)\nhelp: see this")
+            await ctx.send("deepfry arg list\nany number: change contrast in deepfry output (default 5). Higher is scarier.\nsilent: turn video into gif (remove audio)\nhelp: see this")
             return
-        elif arg1 == "vid":
-            audio = 1
-
-    workid = str(uuid.uuid4())
-    output = await getmedia(ctx, workid)
-    workingtype = output[0]
-    filetype = output[1]
+        elif arg1 == "silent":
+            print(workingtype)
+            workingtype = 3
+            print(workingtype)
 
     if workingtype == 0:
         print("exiting, no data")
         return
 
-    if workingtype == 1:
+    if workingtype == 1 or workingtype == 3:
         os.mkdir(f"./{workid}-folder")
         framerate = await getframerate(workid)
         print(framerate)
 
         await splitframes(workid, filetype)
 
-        #Gather the dimensions of a single frame for max wackiness on the resizing
-        with Image.open(f"./{workid}-folder/frame0001.png") as image:
-            width, height = image.size
-
         #Run mogrify in parallel for speed, wiggling variably with the math from earlier
         liquid = await asyncio.create_subprocess_shell(f'cd ./{workid}-folder; ls *.png | parallel mogrify -modulate 100,250,100 -sigmoidal-contrast {contrast},{contrast*14}% -unsharp 0x5 -quality 10 {{}}', stdout=asyncio.subprocess.PIPE)
         stdout, stderr = await liquid.communicate()
 
-        if audio == 0:
+        if workingtype == 1:
+            print("making a video")
+
+            await makevid(workid, framerate)
+
+            #Send it!
+            await ctx.send(file=discord.File(f'{workid}.mp4'))
+
+        if workingtype == 3:
+
             print("making a gif")
 
             await makegif(workid, framerate)
@@ -338,21 +348,10 @@ async def deepfry(ctx, arg1=None):
             #Send it!
             await ctx.send(file=discord.File(f'{workid}.gif'))
 
-            #Clean up all the scratch used in generation
-            shutil.rmtree(f"./{workid}-folder")
-            os.remove(f"{workid}.gif")
-            os.remove(f"{workid}")
+        #Clean up all the scratch used in generation
+        await cleanup(workid)
 
-        if audio == 1:
-            print("making a video")
 
-            await makevid(workid, framerate)
-
-            #Send it!
-            await ctx.send(file=discord.File(f'{workid}.mp4'))
-
-            #Clean up all the scratch used in generation
-            await cleanup(workid)
     if workingtype == 2:
         print("working on image")
 
@@ -392,16 +391,23 @@ async def magik(ctx, arg1=None):
     print(output[1])
 
 
-    if arg1 == "vid":
-        audio = 1
+    if arg1 is not None:
+        if arg1.isdigit():
+            print("custom contrast")
+            contrast = int(arg1)
+        elif arg1 == "help":
+            await ctx.send("deepfry arg list\nany number: change contrast in deepfry output (default 5). Higher is scarier.\nsilent: turn video into gif (remove audio)\nhelp: see this")
+            return
+        elif arg1 == "silent":
+            print(workingtype)
+            workingtype = 3
+            print(workingtype)
 
-    size = 0
-
-    if workingtype == 1:
+    if workingtype == 1 or workingtype == 3:
         os.mkdir(f"./{workid}-folder")
         framerate = await getframerate(workid)
         print(framerate)
-        #split input into series of pngs
+
         await splitframes(workid, filetype)
 
         #Gather the dimensions of a single frame for max wackiness on the resizing
@@ -419,8 +425,18 @@ async def magik(ctx, arg1=None):
         liquid = await asyncio.create_subprocess_shell(f'cd ./{workid}-folder; ls *.png | parallel mogrify -liquid-rescale {width - random.randrange(minwidthwiggle,maxwidthwiggle)}x{height - random.randrange(minheightwiggle,maxheightwiggle)} {{}}', stdout=asyncio.subprocess.PIPE)
         stdout, stderr = await liquid.communicate()
 
-        if audio == 0:
+        if workingtype == 1:
+            print("making a video")
+
+            await makevid(workid, framerate)
+
+            #Send it!
+            await ctx.send(file=discord.File(f'{workid}.mp4'))
+
+        if workingtype == 3:
+
             print("making a gif")
+
             await makegif(workid, framerate)
 
             await sizecheck(workid, ".gif")
@@ -428,19 +444,9 @@ async def magik(ctx, arg1=None):
             #Send it!
             await ctx.send(file=discord.File(f'{workid}.gif'))
 
-            #Clean up all the scratch used in generation
-            shutil.rmtree(f"./{workid}-folder")
-            os.remove(f"{workid}.gif")
-            os.remove(f"{workid}")
+        #Clean up all the scratch used in generation
+        await cleanup(workid)
 
-        if audio == 1:
-            await makevid(workid, framerate)
-
-            #Send it!
-            await ctx.send(file=discord.File(f'{workid}.mp4'))
-
-            #Clean up all the scratch used in generation
-            await cleanup(workid)
     if workingtype == 2:
         print("working on image")
 
@@ -475,6 +481,60 @@ async def testloop(ctx):
 @bot.command()
 async def testloopcmd(ctx):
     testloop.start(ctx)
+
+@bot.command()
+async def chattest(ctx, arg1):
+    sourcemessage = [
+                {
+                "role": "system",
+                "content": "You are Mr.Krabs from the TV Show Spongebob Squarepants. Answer as closely as possible to what you would think he would answer, but keep it to 5 sentences max. You can exceed this if you are describing the environment, or actions taking place in a given response. The absolute max is 10 sentences."
+                }
+        ]
+    global scratchmessage
+
+    if arg1 is not None:
+        if arg1 == "clear":
+            scratchmessage = []
+            await ctx.send("Cleared!")
+            return
+
+    if not scratchmessage:
+        scratchmessage = sourcemessage
+
+    print(sourcemessage)
+    print("\n")
+    print(scratchmessage)
+
+    command = ctx.message.content
+
+    command = command.replace("$chattest ","")
+
+    chat = {}
+    url = "http://localhost:9931/v1/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer no-key"}
+
+    scratchmessage.append({"role": "user", "content": f'{command}'})
+
+    chat['messages'] = scratchmessage
+
+    try:
+        response = requests.post(url, headers=headers, json=chat)
+    except:
+        await ctx.send("failed to reach server")
+        return
+
+    #print(response)
+    #print(response.content)
+
+    test = response.json()
+
+    test = test['choices'][0]['message']['content']
+
+    scratchmessage.append({"role": "assistant", "content": f'{test}'})
+
+    print(test)
+
+    await ctx.send(test)
 
 
 # @bot.event

@@ -1,6 +1,7 @@
 # This example requires the 'message_content' intent.
 
 import discord
+#from discord import app_commands
 import asyncio
 import random
 import requests
@@ -17,16 +18,12 @@ from discord.ext import commands, tasks
 
 intents = discord.Intents.default()
 intents.message_content = True
+#client = discord.Client(intents=intents)
 
-bot = commands.Bot(command_prefix='$', intents=intents)
-
-intents = discord.Intents.default()
-intents.message_content = True
+bot = commands.Bot(command_prefix='$',intents=intents)
+#tree = app_commands.CommandTree(bot)
 
 scratchmessage = []
-
-
-client = discord.Client(intents=intents)
 
 #Function to determine if a webp is a video or image. Fuck you Google.
 async def IsAGif(workid):
@@ -35,16 +32,20 @@ async def IsAGif(workid):
         Index = 0
         for Frame in ImageSequence.Iterator(MediaFile):
             Index += 1
+            print(Index)
         if Index > 1: #Must mean the the .webp is a gif because it has more than one frame
+            print("webp is animated")
             return True
         else: #Must mean that the .webp has 1 frame which makes it a image
+            print("webp is image")
             return False
     except: #If the .webp can't be opened then it is most likely not a .gif or .webp
         return None
 
-#General function for gathering media from embeds or attachments.
-async def getmedia(ctx, workid):
-
+#General function for gathering media from embeds or attachments. Updated to v2 for slash command support.
+async def getmedia2(interaction, workid, message=None):
+    print(interaction)
+    print(message)
     #Create a header to spoof firefox to help with pesky downloads that block python requests
     hdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -54,7 +55,7 @@ async def getmedia(ctx, workid):
        'Connection': 'keep-alive'}
 
     #Get the channel details with the passed context
-    channel = ctx.channel
+    channel = interaction.channel
 
     #Set an null array for attachments in the last 5 messages
     withattachments = []
@@ -70,16 +71,15 @@ async def getmedia(ctx, workid):
     filetype = None
     animewebptest = None
 
-    if ctx.message.reference is not None:
+    if message is not None:
         print("This is a reply")
-        message = await channel.fetch_message(ctx.message.reference.message_id)
         print(message)
         print(message.attachments)
         print(message.embeds)
         if not (message.attachments or message.embeds):
             print("nothing found")
             workingtype = 0
-            await ctx.send("No media found.")
+            await interaction.response.send_message("No media found.")
             return workingtype, filetype
         id = message.id
     else:
@@ -92,7 +92,7 @@ async def getmedia(ctx, workid):
         if not withattachments:
             print("nothing found")
             workingtype = 0
-            await ctx.send("No media found.")
+            await interaction.response.send_message("No media found.")
             return workingtype, filetype
         id = withattachments[0]
 
@@ -128,6 +128,15 @@ async def getmedia(ctx, workid):
                     workingtype = 2
                 else:
                     workingtype = 0
+        if "video" in filetype:
+            print("checking for audio")
+            audiotracks = await getaudiotracks(workid)
+            print(audiotracks)
+
+            if audiotracks == 0:
+                workingtype = 3
+            else:
+                workingtype = 1
     elif message.embeds:
         print(message.embeds[0].url)
         print(message.embeds[0].image)
@@ -160,7 +169,7 @@ async def getmedia(ctx, workid):
                     if message.embeds[0].thumbnail.proxy_url != None:
                         req = requests.get(str(message.embeds[0].thumbnail.proxy_url), headers=hdr)
                 case 10:
-                    await ctx.send("No media found.")
+                    await interaction.followup.send("No media found.")
                     workingtype = 0
                     break
 
@@ -218,6 +227,16 @@ async def getmedia(ctx, workid):
                     workingtype = 2
                 else:
                     workingtype = 0
+        if "video" in filetype:
+            print("checking for audio")
+            audiotracks = await getaudiotracks(workid)
+            print(audiotracks)
+
+            if audiotracks == 0:
+                workingtype = 3
+            else:
+                workingtype = 1
+
 
 
     else:
@@ -227,6 +246,17 @@ async def getmedia(ctx, workid):
     #Just send the extension. It makes life easier
     filetype = mimetypes.guess_extension(filetype)
     return workingtype, filetype
+
+async def getaudiotracks(workid):
+    tracks = await asyncio.create_subprocess_shell(f'ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 file:{workid} | wc -w', stdout=asyncio.subprocess.PIPE)
+    numtracks = await tracks.communicate()
+    numtracks = numtracks[0].decode('ascii')
+    numtracks = numtracks.strip()
+
+    numtracks = int(numtracks)
+
+#    print(f'{numtracks} audio tracks')
+    return numtracks
 
 async def getframerate(workid):
     frame = await asyncio.create_subprocess_shell(f'ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 {workid}', stdout=asyncio.subprocess.PIPE)
@@ -276,43 +306,24 @@ async def sizecheck(workid, filetype):
 async def cleanup(workid):
     frame = await asyncio.create_subprocess_shell(f'rm -rf *{workid}*', stdout=asyncio.subprocess.PIPE)
 
-# async def send_image():
+async def deepfrying(interaction, contrast, message=None):
+    await interaction.response.defer()
+    print(interaction)
 
-@bot.command()
-async def response(ctx):
-    print("test command")
-    await ctx.send(channel)
-
-@bot.command()
-async def image(ctx):
-    print("image command")
-    await ctx.send(file=discord.File('test.png'))
-
-@bot.command()
-async def explode(cts, arg1=None):
-    pass
-
-@bot.command(aliases=['deep'])
-async def deepfry(ctx, arg1=None):
     workid = str(uuid.uuid4())
-    output = await getmedia(ctx, workid)
+
+    if message is not None:
+        output = await getmedia2(interaction, workid, message)
+    else:
+        output = await getmedia2(interaction, workid)
+
     workingtype = output[0]
     filetype = output[1]
 
-    contrast = 5
+    print(contrast)
     audio = 0
 
-    if arg1 is not None:
-        if arg1.isdigit():
-            print("custom contrast")
-            contrast = int(arg1)
-        elif arg1 == "help":
-            await ctx.send("deepfry arg list\nany number: change contrast in deepfry output (default 5). Higher is scarier.\nsilent: turn video into gif (remove audio)\nhelp: see this")
-            return
-        elif arg1 == "silent":
-            print(workingtype)
-            workingtype = 3
-            print(workingtype)
+    print(contrast)
 
     if workingtype == 0:
         print("exiting, no data")
@@ -335,7 +346,7 @@ async def deepfry(ctx, arg1=None):
             await makevid(workid, framerate)
 
             #Send it!
-            await ctx.send(file=discord.File(f'{workid}.mp4'))
+            await interaction.followup.send(file=discord.File(f'{workid}.mp4'))
 
         if workingtype == 3:
 
@@ -346,7 +357,7 @@ async def deepfry(ctx, arg1=None):
             await sizecheck(workid, ".gif")
 
             #Send it!
-            await ctx.send(file=discord.File(f'{workid}.gif'))
+            await interaction.followup.send(file=discord.File(f'{workid}.gif'))
 
         #Clean up all the scratch used in generation
         await cleanup(workid)
@@ -366,42 +377,25 @@ async def deepfry(ctx, arg1=None):
         os.replace(f'{workid}',f'{workid}{filetype}')
 
         #Send it!
-        await ctx.send(file=discord.File(f'{workid}{filetype}'))
+        await interaction.followup.send(file=discord.File(f'{workid}{filetype}'))
 
         #Cleanup
         await cleanup(workid)
 
-@bot.command()
-async def magik(ctx, arg1=None):
+async def magiking(interaction, message=None):
+    await interaction.response.defer()
     workid = str(uuid.uuid4())
-    output = await getmedia(ctx, workid)
 
+    if message is not None:
+        output = await getmedia2(interaction, workid, message)
+    else:
+        output = await getmedia2(interaction, workid)
     workingtype = output[0]
     filetype = output[1]
-    print(filetype)
 
     if workingtype == 0:
         print("exiting, no data")
         return
-
-    audio = 0
-    print(output)
-    #Only useful if we need more than one return variable]
-    print(output[0])
-    print(output[1])
-
-
-    if arg1 is not None:
-        if arg1.isdigit():
-            print("custom contrast")
-            contrast = int(arg1)
-        elif arg1 == "help":
-            await ctx.send("deepfry arg list\nany number: change contrast in deepfry output (default 5). Higher is scarier.\nsilent: turn video into gif (remove audio)\nhelp: see this")
-            return
-        elif arg1 == "silent":
-            print(workingtype)
-            workingtype = 3
-            print(workingtype)
 
     if workingtype == 1 or workingtype == 3:
         os.mkdir(f"./{workid}-folder")
@@ -431,7 +425,7 @@ async def magik(ctx, arg1=None):
             await makevid(workid, framerate)
 
             #Send it!
-            await ctx.send(file=discord.File(f'{workid}.mp4'))
+            await interaction.followup.send(file=discord.File(f'{workid}.mp4'))
 
         if workingtype == 3:
 
@@ -442,7 +436,7 @@ async def magik(ctx, arg1=None):
             await sizecheck(workid, ".gif")
 
             #Send it!
-            await ctx.send(file=discord.File(f'{workid}.gif'))
+            await interaction.followup.send(file=discord.File(f'{workid}.gif'))
 
         #Clean up all the scratch used in generation
         await cleanup(workid)
@@ -468,10 +462,260 @@ async def magik(ctx, arg1=None):
         os.replace(f'{workid}',f'{workid}{filetype}')
 
         #Send it!
-        await ctx.send(file=discord.File(f'{workid}{filetype}'))
+        await interaction.followup.send(file=discord.File(f'{workid}{filetype}'))
 
         #Cleanup
         await cleanup(workid)
+
+async def reversing(interaction, message=None):
+    await interaction.response.defer()
+    workid = str(uuid.uuid4())
+
+    if message is not None:
+        output = await getmedia2(interaction, workid, message)
+    else:
+        output = await getmedia2(interaction, workid)
+
+    workingtype = output[0]
+    filetype = output[1]
+
+    if workingtype == 0:
+        print("exiting, no data")
+        return
+
+    if workingtype == 2:
+        print("can't reverse an image")
+        await interaction.followup.send("This command does nothing with images, please submit a gif or video")
+
+    if workingtype == 1 or workingtype == 3:
+        if workingtype == 1:
+            reverseffmpeg = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -i {workid} -vf reverse -af areverse {workid}.mp4', stdout=asyncio.subprocess.PIPE)
+            stdout, stderr = await reverseffmpeg.communicate()
+
+            await interaction.followup.send(file=discord.File(f'{workid}.mp4'))
+        elif workingtype == 3:
+            reverseffmpeg = await asyncio.create_subprocess_shell(f'ffmpeg -hide_banner -loglevel error -i {workid} -vf reverse {workid}.gif', stdout=asyncio.subprocess.PIPE)
+            stdout, stderr = await reverseffmpeg.communicate()
+            await interaction.followup.send(file=discord.File(f'{workid}.gif'))
+
+    await cleanup(workid)
+
+async def exploding(interaction, factor, flip=False, message=None):
+    await interaction.response.defer()
+    workid = str(uuid.uuid4())
+
+    if message is not None:
+        output = await getmedia2(interaction, workid, message)
+    else:
+        output = await getmedia2(interaction, workid)
+
+    workingtype = output[0]
+    filetype = output[1]
+
+    plodevalue = factor
+    if factor != -1.0 and flip is False:
+        plodevalue = factor * -1
+
+    if factor != 0.5 and flip is True:
+        plodevalue = factor * 0.5
+
+    if workingtype == 0:
+        print("exiting, no data")
+        return
+
+    if workingtype == 2:
+        print("working on image")
+
+        #Run mogrify in parallel for speed, wiggling variably with the math from earlier
+        plode = await asyncio.create_subprocess_shell(f'mogrify -implode {plodevalue} {workid}', stdout=asyncio.subprocess.PIPE)
+        stdout, stderr = await plode.communicate()
+
+        os.replace(f'{workid}',f'{workid}{filetype}')
+
+        #Send it!
+        await interaction.followup.send(file=discord.File(f'{workid}{filetype}'))
+
+        #Cleanup
+        await cleanup(workid)
+
+    if workingtype == 1 or workingtype == 3:
+        os.mkdir(f"./{workid}-folder")
+        framerate = await getframerate(workid)
+        print(framerate)
+
+        await splitframes(workid, filetype)
+
+        #Gather the dimensions of a single frame for max wackiness on the resizing
+        with Image.open(f"./{workid}-folder/frame0001.png") as image:
+            width, height = image.size
+
+        #Calc some decent values to use randomly
+        maxheightwiggle = round(height/2)
+        maxwidthwiggle = round(width/2)
+
+        minheightwiggle = round(height/3)
+        minwidthwiggle = round(width/3)
+
+        #Run mogrify in parallel for speed, wiggling variably with the math from earlier
+        plode = await asyncio.create_subprocess_shell(f'cd ./{workid}-folder; ls *.png | parallel mogrify -implode {plodevalue} {{}}', stdout=asyncio.subprocess.PIPE)
+        stdout, stderr = await plode.communicate()
+
+        if workingtype == 1:
+            print("making a video")
+
+            await makevid(workid, framerate)
+
+            #Send it!
+            await interaction.followup.send(file=discord.File(f'{workid}.mp4'))
+
+        if workingtype == 3:
+
+            print("making a gif")
+
+            await makegif(workid, framerate)
+
+            await sizecheck(workid, ".gif")
+
+            #Send it!
+            await interaction.followup.send(file=discord.File(f'{workid}.gif'))
+
+        #Clean up all the scratch used in generation
+        await cleanup(workid)
+
+async def tinting(interaction, color, factor, message=None):
+    await interaction.response.defer()
+    workid = str(uuid.uuid4())
+
+    if message is not None:
+        output = await getmedia2(interaction, workid, message)
+    else:
+        output = await getmedia2(interaction, workid)
+
+    workingtype = output[0]
+    filetype = output[1]
+
+    colorvalue = color
+    tintvalue = factor
+    print(colorvalue)
+    print(tintvalue)
+
+    if workingtype == 0:
+        print("exiting, no data")
+        return
+
+    if workingtype == 2:
+        print("working on image")
+
+        #Run mogrify in parallel for speed, wiggling variably with the math from earlier
+        tint = await asyncio.create_subprocess_shell(f'mogrify -fill {colorvalue} -tint {tintvalue} {workid}', stdout=asyncio.subprocess.PIPE)
+        stdout, stderr = await tint.communicate()
+
+        os.replace(f'{workid}',f'{workid}{filetype}')
+
+        #Send it!
+        await interaction.followup.send(file=discord.File(f'{workid}{filetype}'), content=f'tint: {colorvalue}, factor: {tintvalue}')
+
+        #Cleanup
+        await cleanup(workid)
+
+    if workingtype == 1 or workingtype == 3:
+        os.mkdir(f"./{workid}-folder")
+        framerate = await getframerate(workid)
+        print(framerate)
+
+        await splitframes(workid, filetype)
+
+        #Run mogrify in parallel for speed, wiggling variably with the math from earlier
+        tint = await asyncio.create_subprocess_shell(f'cd ./{workid}-folder; ls *.png | parallel mogrify -fill {colorvalue} -tint {tintvalue} {{}}', stdout=asyncio.subprocess.PIPE)
+        stdout, stderr = await tint.communicate()
+
+        if workingtype == 1:
+            print("making a video")
+
+            await makevid(workid, framerate)
+
+            #Send it!
+            await interaction.followup.send(file=discord.File(f'{workid}.mp4'), content=f'tint: {colorvalue}, factor: {tintvalue}')
+
+        if workingtype == 3:
+
+            print("making a gif")
+
+            await makegif(workid, framerate)
+
+            await sizecheck(workid, ".gif")
+
+            #Send it!
+            await interaction.followup.send(file=discord.File(f'{workid}.gif'), content=f'tint: {colorvalue}, factor: {tintvalue}')
+
+        #Clean up all the scratch used in generation
+        await cleanup(workid)
+# async def send_image():
+
+@bot.tree.command(name='nessping', description='testcommand')
+async def testslash(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong!")
+
+@bot.command()
+async def response(ctx):
+    print("test command")
+    await ctx.send(channel)
+
+@bot.command()
+async def image(ctx):
+    print("image command")
+    await ctx.send(file=discord.File('test.png'))
+
+@bot.tree.command(name='deep', description='deepfry an image')
+async def deepfry(interaction: discord.Interaction, contrast: int = 5):
+    await deepfrying(interaction, contrast)
+
+@bot.tree.context_menu(name='deep')
+async def deepfry_menu(interaction: discord.Interaction, message: discord.Message):
+    contrast = 5
+    await deepfrying(interaction, contrast)
+
+@bot.tree.command(name='magik', description='wacky content-aware scaling')
+async def magik(interaction: discord.Interaction):
+    await magiking(interaction)
+
+@bot.tree.context_menu(name='magik')
+async def magik_menu(interaction: discord.Interaction, message: discord.Message):
+    await magiking(interaction, message)
+
+@bot.tree.command(name='reverse', description='reverse video or gif')
+async def reverse(interaction: discord.Interaction):
+    await reversing(interaction)
+
+@bot.tree.context_menu(name='reverse')
+async def reverse_menu(interaction: discord.Interaction, message: discord.Message):
+    await reversing(interaction, message)
+
+@bot.tree.command(name='explode', description='BOOM')
+async def explode(interaction: discord.Interaction, factor: float = -1.0):
+    await exploding(interaction, factor)
+
+@bot.tree.context_menu(name='explode')
+async def explode_menu(interaction: discord.Interaction, message: discord.Message):
+    factor = -1.0
+    flip = False
+    await exploding(interaction, factor, flip, message)
+
+@bot.tree.command(name='implode', description='ZOOP')
+async def implode(interaction: discord.Interaction, factor: float = 0.5):
+    flip = True
+    await exploding(interaction, factor, flip)
+
+@bot.tree.context_menu(name='implode')
+async def implode_menu(interaction: discord.Interaction, message: discord.Message):
+    factor = 0.5
+    flip = True
+    await exploding(interaction, factor, flip, message)
+
+@bot.tree.command(name='tint', description='Add a tint to an image')
+async def tint(interaction: discord.Interaction, color: str = "green", factor: int = 100):
+    await tinting(interaction, color, factor)
+
 
 @tasks.loop(seconds=1, count=5)
 async def testloop(ctx):
@@ -536,6 +780,14 @@ async def chattest(ctx, arg1):
 
     await ctx.send(test)
 
+@bot.event
+async def on_ready():
+    guildid=discord.Object(id=231475464055685121)
+    print(guildid)
+    await bot.tree.sync(guild=guildid)
+    await bot.tree.sync()
+    # print "ready" in the console when the bot is ready to work
+    print("ready")
 
 # @bot.event
 # async def on_ready():
